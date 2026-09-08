@@ -114,3 +114,7 @@ Automated local checks cover session signature validation, expiry and password r
 No live OpenAI call or Netlify account deployment was performed in this environment. Your first deployed assignment is the final integration check. No API key is embedded in the package.
 
 Technical references: [Responses web search](https://developers.openai.com/api/docs/guides/tools-web-search), [Netlify Blobs](https://docs.netlify.com/build/data-and-storage/netlify-blobs/).
+
+
+## v1.1 — Talk back to agents
+Open any finished assignment and click **Reply to agent**. You can type a follow-up or use **Yes — proceed**, **Do the next step**, or **Revise it**. Each reply creates a linked continuation assignment and authorizes one additional OpenAI API run. The previous result is automatically included as context.

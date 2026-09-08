@@ -27,7 +27,7 @@ function render(){
  $('queue-title').textContent=selected==='all'?'Whole company':state.agents.find(a=>a.id===selected).name;
  $('filters').replaceChildren();for(const [key,label] of Object.entries(statuses)){const b=el('button',label,'');b.classList.toggle('on',filter===key);b.onclick=()=>{filter=key;render();};$('filters').append(b);}
  const tasks=state.tasks.filter(t=>(selected==='all'||selected===t.agent)&&(filter==='all'||filter===t.status));$('tasks').replaceChildren();
- for(const t of tasks){const article=el('article');const button=el('button',null,'task-open');button.append(el('span',displayStatus(t),'badge '+t.status),el('h3',t.prompt.length>100?t.prompt.slice(0,100)+'…':t.prompt),el('p',state.agents.find(a=>a.id===t.agent)?.name+' · '+new Date(t.createdAt).toLocaleString()));button.onclick=()=>{detailId=t.id;renderDetail();$('detail').showModal();};article.append(button);$('tasks').append(article);}
+ for(const t of tasks){const article=el('article');const button=el('button',null,'task-open');button.append(el('span',displayStatus(t),'badge '+t.status),el('h3',(t.displayPrompt||t.prompt).length>100?(t.displayPrompt||t.prompt).slice(0,100)+'…':(t.displayPrompt||t.prompt)),el('p',state.agents.find(a=>a.id===t.agent)?.name+' · '+new Date(t.createdAt).toLocaleString()));button.onclick=()=>{detailId=t.id;renderDetail();$('detail').showModal();};article.append(button);$('tasks').append(article);}
  if(!tasks.length)$('tasks').append(el('p','No assignments here yet. Choose Assign work to begin.','empty'));
  if(!knowledgeDirty){$('knowledge').value=state.knowledge;knowledgeVersion=state.knowledgeVersion;}
  const connections=$('connections');connections.replaceChildren();connections.append(el('p','OpenAI key: '+(state.checks.openai?'Configured (verified when a run succeeds)':'Not configured')),el('p','Model: '+state.model),el('p','Today: '+(state.budget.day===new Date().toISOString().slice(0,10)?state.budget.count:0)+' / '+state.dailyLimit+' assignments (UTC)'),el('p','Saved storage: connected · '+state.tasks.length+' / 500 assignments'),el('p','Email / CRM / accounting: not connected'));
@@ -49,14 +49,15 @@ function renderOutput(t,container){
  for(const a of annotations){if(a.start_index<cursor||a.end_index>part.text.length)continue;p.append(document.createTextNode(part.text.slice(cursor,a.start_index)));const link=el('a',part.text.slice(a.start_index,a.end_index)||a.title||'Source');link.href=a.url;link.target='_blank';link.rel='noopener noreferrer';p.append(link);cursor=a.end_index;}p.append(document.createTextNode(part.text.slice(cursor)));container.append(p);}}
  else container.append(el('div',t.output||'No output yet.','output'));
 }
-function renderDetail(){const t=state.tasks.find(t=>t.id===detailId);if(!t)return;const root=$('detail-body');root.replaceChildren();$('detail-title').textContent=state.agents.find(a=>a.id===t.agent)?.name||'Assignment';root.append(el('p',displayStatus(t),'badge '+t.status),el('h3','Assignment'),el('p',t.prompt));
+function renderDetail(){const t=state.tasks.find(t=>t.id===detailId);if(!t)return;const root=$('detail-body');root.replaceChildren();$('detail-title').textContent=state.agents.find(a=>a.id===t.agent)?.name||'Assignment';root.append(el('p',displayStatus(t),'badge '+t.status),el('h3',t.parentId?'Owner reply':'Assignment'),el('p',t.displayPrompt||t.prompt));
+ if(t.parentId){const parent=state.tasks.find(x=>x.id===t.parentId);if(parent){const box=el('div',null,'thread-context');box.append(el('small','Previous agent result'),el('div',(parent.output||parent.error||'No saved result.').slice(-3500),'output'));root.append(box);}}
  if(t.error)root.append(el('p',t.error,'error'));
  if(!fresh(t)&&['queued','running'].includes(t.status))root.append(el('p','No completion was confirmed. Check Netlify function logs. A new run may incur additional usage. A queued run can be resumed without creating a new assignment.','error'));
  if(t.output){root.append(el('h3','Result'));renderOutput(t,root);}
  if(t.sources?.length){root.append(el('h3','Sources'));const list=el('ul');for(const s of t.sources){if(!/^https?:\/\//.test(s.url))continue;const li=el('li');const a=el('a',s.title);a.href=s.url;a.target='_blank';a.rel='noopener noreferrer';li.append(a);list.append(li);}root.append(list);}
  root.append(el('h3','Activity'));for(const s of t.steps)root.append(el('p',new Date(s.time).toLocaleTimeString()+' — '+s.text,'activity'));
  if(t.usage)root.append(el('p',`Model: ${t.model} · Input tokens: ${t.usage.input_tokens||0} · Output tokens: ${t.usage.output_tokens||0}. Token counts exclude separate web-search charges.`,'hint'));
- $('accept').hidden=t.status!=='review';$('resume').hidden=t.status!=='queued';$('download').hidden=!t.output;$('again').hidden=['queued','running'].includes(t.status)&&fresh(t);
+ $('accept').hidden=t.status!=='review';$('resume').hidden=t.status!=='queued';$('download').hidden=!t.output;$('again').hidden=['queued','running'].includes(t.status)&&fresh(t);$('reply').hidden=!['review','accepted','failed'].includes(t.status);$('reply-box').hidden=true;$('reply-web-search').checked=!!t.webSearch;$('reply-message').value='';
 }
 function download(name,text,type='text/plain'){const url=URL.createObjectURL(new Blob([text],{type}));const a=el('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function compose(task){requestId=crypto.randomUUID();$('prompt').value=task?.prompt||'';if(task)$('agent').value=task.agent;else if(selected!=='all')$('agent').value=selected;$('web-search').checked=task?.webSearch||false;$('compose').showModal();}
@@ -70,6 +71,10 @@ $('knowledge-form').onsubmit=async e=>{e.preventDefault();e.submitter.disabled=t
 $('accept').onclick=async()=>{try{await api('accept','POST',{id:detailId});await refresh();}catch(e){notify(e.message);}};
 $('resume').onclick=async()=>{try{const r=await api('dispatch','POST',{id:detailId});notify(r.notice||'Worker dispatch requested.');await refresh();}catch(e){notify(e.message);}};
 $('again').onclick=()=>{const task=state.tasks.find(t=>t.id===detailId);$('detail').close();compose(task);};
+
+$('reply').onclick=()=>{$('reply-box').hidden=false;$('reply-message').focus();};
+document.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>{$('reply-box').hidden=false;$('reply-message').value=b.dataset.quick;$('reply-message').focus();});
+$('reply-form').onsubmit=async e=>{e.preventDefault();const message=$('reply-message').value.trim();if(!message)return;const button=$('send-reply');button.disabled=true;try{const id=crypto.randomUUID();const result=await api('followup','POST',{id,parentId:detailId,message,webSearch:$('reply-web-search').checked});notify(result.notice||'Reply sent. The agent is continuing the work.');$('detail').close();filter='all';await refresh();detailId=result.id;renderDetail();$('detail').showModal();}catch(err){notify(err.message);}finally{button.disabled=false;}};
 $('download').onclick=()=>{const t=state.tasks.find(t=>t.id===detailId);download('4D-Result-'+t.id+'.txt',t.prompt+'\n\n'+t.output+'\n\nSOURCES\n'+(t.sources||[]).map(s=>s.title+'\n'+s.url).join('\n\n'));};
 $('export').onclick=()=>download('4D-Agent-Office-History.json',JSON.stringify(state,null,2),'application/json');
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('app').hidden)refresh();});

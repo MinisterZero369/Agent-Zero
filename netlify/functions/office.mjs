@@ -1,5 +1,5 @@
 import { getStore } from '@netlify/blobs';
-import {AGENTS,body,json,fail,setup,secret,session,equal,requireAuth,sameOrigin,mutate,read,newTask,signature,limit} from '../../lib/core.mjs';
+import {AGENTS,body,json,fail,setup,secret,session,equal,requireAuth,sameOrigin,mutate,read,newTask,newFollowupTask,signature,limit} from '../../lib/core.mjs';
 const storage=()=>getStore({name:'4d-agent-office-v1',consistency:'strong'});
 export default async function handler(req,context){
  try {
@@ -27,10 +27,11 @@ export default async function handler(req,context){
   if(req.method==='POST'&&action==='accept'){
    const b=await body(req);await mutate(store,d=>{const t=d.tasks.find(t=>t.id===b.id);if(!t)throw fail('Assignment not found.',404);if(t.status==='accepted')return;if(t.status!=='review')throw fail('Only finished work can be accepted.');t.status='accepted';t.steps.push({time:new Date().toISOString(),text:'Owner accepted this draft. No external action was performed.'});});return json({ok:true});
   }
-  if(req.method==='POST'&&['run','dispatch'].includes(action)){
+  if(req.method==='POST'&&['run','followup','dispatch'].includes(action)){
    if(!setup().openai)throw fail('Add OPENAI_API_KEY in Netlify and redeploy.',503);
    const b=await body(req);let task;
    if(action==='run')({result:task}=await mutate(store,d=>newTask(d,b)));
+   else if(action==='followup')({result:task}=await mutate(store,d=>newFollowupTask(d,b)));
    else {task=(await read(store)).tasks.find(t=>t.id===b.id);if(!task)throw fail('Assignment not found.',404);}
    if(task.status!=='queued')return json({id:task.id,status:task.status});
    // Only use the platform's canonical site origin; never a client-supplied destination.

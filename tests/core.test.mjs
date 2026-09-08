@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {authenticated,session,initial,mutate,newTask,sameOrigin,sources} from '../lib/core.mjs';
+import {authenticated,session,initial,mutate,newTask,newFollowupTask,sameOrigin,sources} from '../lib/core.mjs';
 import {run} from '../lib/runner.mjs';
 class Store {
  value=null;etag=0;
@@ -29,3 +29,5 @@ test('duplicate workers make one paid call; save text, usage and citations',asyn
 test('quota failure stays failed and worker retries do not spend again',async()=>{const s=new Store();await mutate(s,d=>newTask(d,input(1),Date.now(),env));let calls=0;const mock=async()=>{calls++;return Response.json({error:{message:'internal provider detail'}},{status:429});};await run(s,input(1).id,mock,env);await run(s,input(1).id,mock,env);assert.equal(calls,1);assert.equal(s.value.tasks[0].status,'failed');assert.match(s.value.tasks[0].error,/quota/);});
 test('incomplete output is never labeled completed',async()=>{const s=new Store();await mutate(s,d=>newTask(d,input(1),Date.now(),env));await run(s,input(1).id,async()=>Response.json({status:'incomplete',incomplete_details:{reason:'max_output_tokens'}}),env);assert.equal(s.value.tasks[0].status,'failed');assert.match(s.value.tasks[0].error,/smaller assignment/);});
 test('unsafe source URLs excluded',()=>assert.deepEqual(sources({output:[{content:[{annotations:[{type:'url_citation',url:'javascript:alert(1)'}]}]}]}),[]));
+
+test('owner reply creates a linked continuation with previous result context',()=>{const d=initial();const e={...env,MAX_RUNS_PER_DAY:'5'};const parent=newTask(d,input(1),1000,e);parent.status='review';parent.output='The agent recommends building the prospect list next.';const child=newFollowupTask(d,{id:input(2).id,parentId:parent.id,message:'Yes, proceed and build the list.',webSearch:true},2000,e);assert.equal(child.parentId,parent.id);assert.equal(child.ownerReply,'Yes, proceed and build the list.');assert.match(child.prompt,/previous agent result/i);assert.match(child.prompt,/building the prospect list next/i);assert.equal(child.status,'queued');assert.equal(d.tasks.length,2);});

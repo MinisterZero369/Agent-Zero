@@ -11,3 +11,7 @@ This is a single-owner, on-demand research/drafting office. It does not send ema
 Required settings: `OPENAI_API_KEY`, `OFFICE_PASSWORD` (16+ characters), `SESSION_SECRET` (32+ random characters). Keep them in Netlify environment variables.
 
 Run local checks with `npm ci` then `npm test` and `npm run build`. See the guide's validation section for live-testing limits.
+
+
+## v1.1 — Talk back to agents
+Open any finished assignment and click **Reply to agent**. You can type a follow-up or use **Yes — proceed**, **Do the next step**, or **Revise it**. Each reply creates a linked continuation assignment and authorizes one additional OpenAI API run. The previous result is automatically included as context.
