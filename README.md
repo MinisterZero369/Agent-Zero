@@ -15,3 +15,7 @@ Run local checks with `npm ci` then `npm test` and `npm run build`. See the guid
 
 ## v1.1 — Talk back to agents
 Open any finished assignment and click **Reply to agent (threaded)**. You can type a follow-up or use **Yes — proceed**, **Do the next step**, or **Revise it**. Each reply creates a linked continuation turn that is shown inline in the same conversation and authorizes one additional OpenAI API run. The previous result is automatically included as context.
+
+
+## v1.3 queue visibility and recovery
+Queued assignments now visibly occupy active slots, queued desks show Waiting, and the browser retries dispatch for fresh queued work every 30 seconds while the office is open. Duplicate dispatch is safe because the worker atomically claims only queued assignments.

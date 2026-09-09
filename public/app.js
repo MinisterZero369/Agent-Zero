@@ -1,5 +1,6 @@
 const $=id=>document.getElementById(id);
 let state=null,selected='all',filter='all',detailId=null,poll=null,loading=false,knowledgeDirty=false,knowledgeVersion=0,activeView='office',requestId=null;
+const dispatchAttempts=new Map();
 const statuses={all:'All',queued:'Queued',running:'Running',review:'Review',accepted:'Accepted',failed:'Failed'};
 async function api(action,method='GET',data){
  const response=await fetch('/.netlify/functions/office?action='+action,{method,headers:method==='POST'?{'Content-Type':'application/json'}:{},...(data?{body:JSON.stringify(data)}:{})});
@@ -11,15 +12,23 @@ function notify(message){$('notice').textContent=message;$('notice').hidden=!mes
 function showLogin(){clearTimeout(poll);$('app').hidden=true;$('login').hidden=false;for(const d of document.querySelectorAll('dialog[open]'))d.close();}
 function fresh(t){return ['running','queued'].includes(t.status)&&Date.now()-Date.parse(t.startedAt||t.createdAt)<14*60000;}
 function displayStatus(t){return ['running','queued'].includes(t.status)&&!fresh(t)?'Interrupted / unconfirmed':statuses[t.status];}
+async function recoverQueued(){
+ const now=Date.now();
+ const queued=state.tasks.filter(t=>t.status==='queued'&&fresh(t));
+ for(const t of queued){
+  const last=dispatchAttempts.get(t.id)||0;if(now-last<30000)continue;dispatchAttempts.set(t.id,now);
+  try{await api('dispatch','POST',{id:t.id});}catch{}
+ }
+}
 async function refresh(){
  if(loading)return;loading=true;
- try{state=await api('state');$('login').hidden=true;$('app').hidden=false;render();$('sync-status').textContent='Synced '+new Date().toLocaleTimeString();}
+ try{state=await api('state');$('login').hidden=true;$('app').hidden=false;render();$('sync-status').textContent='Synced '+new Date().toLocaleTimeString();await recoverQueued();}
  catch(e){if(!$('app').hidden){notify(e.message);$('sync-status').textContent='Sync interrupted — last saved view';}}
- finally{loading=false;clearTimeout(poll);if(!$('app').hidden)poll=setTimeout(refresh,10000);}
+ finally{loading=false;clearTimeout(poll);if(!$('app').hidden)poll=setTimeout(refresh,5000);}
 }
 function chooseView(view){activeView=view;for(const n of ['office','knowledge','setup'])$(n+'-view').hidden=n!==view;document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('on',b.dataset.view===view));}
 function render(){
- const live=state.tasks.filter(t=>t.status==='running'&&fresh(t));$('running-count').textContent=live.length;$('review-count').textContent=state.tasks.filter(t=>t.status==='review').length;
+ const live=state.tasks.filter(t=>t.status==='running'&&fresh(t));const queued=state.tasks.filter(t=>t.status==='queued'&&fresh(t));const active=[...live,...queued];$('active-count').textContent=active.length;$('running-count').textContent=live.length;$('review-count').textContent=state.tasks.filter(t=>t.status==='review').length;
  const departments=$('departments');departments.replaceChildren();
  for(const a of state.agents){const ts=state.tasks.filter(t=>t.agent===a.id);const card=el('button',null,'dept'+(selected===a.id?' selected':''));card.style.setProperty('--c',a.color);const top=el('div',a.name,'deptname');const count=el('div',null,'number');count.append(el('b',ts.filter(t=>t.status==='running'&&fresh(t)).length),el('small','RUNNING'));
  const stats=el('div',null,'stats');for(const [label,status] of [['QUEUED','queued'],['REVIEW','review'],['ACCEPTED','accepted']])stats.append(el('span',label+' '+ts.filter(t=>t.status===status).length));card.append(top,count,stats);card.onclick=()=>{selected=selected===a.id?'all':a.id;render();};departments.append(card);}
@@ -31,17 +40,17 @@ function render(){
  if(!tasks.length)$('tasks').append(el('p','No assignments here yet. Choose Assign work to begin.','empty'));
  if(!knowledgeDirty){$('knowledge').value=state.knowledge;knowledgeVersion=state.knowledgeVersion;}
  const connections=$('connections');connections.replaceChildren();connections.append(el('p','OpenAI key: '+(state.checks.openai?'Configured (verified when a run succeeds)':'Not configured')),el('p','Model: '+state.model),el('p','Today: '+(state.budget.day===new Date().toISOString().slice(0,10)?state.budget.count:0)+' / '+state.dailyLimit+' assignments (UTC)'),el('p','Saved storage: connected · '+state.tasks.length+' / 500 assignments'),el('p','Email / CRM / accounting: not connected'));
- renderMap(live);if($('detail').open)renderDetail();chooseView(activeView);
+ renderMap(live,queued);if($('detail').open)renderDetail();chooseView(activeView);
 }
 const positions=[[18,24],[50,15],[82,24],[82,68],[50,81],[18,68]];
-function renderMap(live){
- const svg=$('comms'),root=$('stations'),ns='http://www.w3.org/2000/svg';svg.replaceChildren();root.replaceChildren();$('map').classList.toggle('active',live.length>0);
+function renderMap(live,queued){
+ const svg=$('comms'),root=$('stations'),ns='http://www.w3.org/2000/svg';svg.replaceChildren();root.replaceChildren();$('map').classList.toggle('active',live.length>0||queued.length>0);
  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
- state.agents.forEach((a,i)=>{const [x,y]=positions[i],isLive=live.some(t=>t.agent===a.id),waiting=state.tasks.some(t=>t.agent===a.id&&t.status==='review');
+ state.agents.forEach((a,i)=>{const [x,y]=positions[i],isLive=live.some(t=>t.agent===a.id),isQueued=queued.some(t=>t.agent===a.id),waiting=state.tasks.some(t=>t.agent===a.id&&t.status==='review');
   const line=document.createElementNS(ns,'line');for(const [k,v] of Object.entries({x1:50,y1:50,x2:x,y2:y}))line.setAttribute(k,v);svg.append(line);
   if(isLive&&!reduced){const circle=document.createElementNS(ns,'circle');circle.setAttribute('r','.6');circle.setAttribute('class','packet');const motion=document.createElementNS(ns,'animateMotion');motion.setAttribute('path',`M 50 50 L ${x} ${y}`);motion.setAttribute('dur',(3+i*.2)+'s');motion.setAttribute('repeatCount','indefinite');circle.append(motion);svg.append(circle);}
-  const station=el('button',null,'station '+(isLive?'working':waiting?'waiting':'idle'));station.style.left=x+'%';station.style.top=y+'%';station.style.setProperty('--delay',i*-.25+'s');station.setAttribute('aria-label',a.name+': '+(isLive?'Running':waiting?'Review ready':'Idle'));
-  const worker=el('div',null,'worker');worker.append(el('i',null,'head'),el('i',null,'body'));const desk=el('div',null,'desk');desk.append(el('i',null,'screen'),el('i',null,'keyboard'),el('i',null,'signal'));station.append(worker,desk,el('label',a.name),el('small',isLive?'Running':waiting?'Review ready':'Idle','desk-status'));station.onclick=()=>{selected=a.id;render();};root.append(station);
+  const station=el('button',null,'station '+(isLive?'working':isQueued?'queued waiting':waiting?'waiting':'idle'));station.style.left=x+'%';station.style.top=y+'%';station.style.setProperty('--delay',i*-.25+'s');station.setAttribute('aria-label',a.name+': '+(isLive?'Running':isQueued?'Queued':waiting?'Review ready':'Idle'));
+  const worker=el('div',null,'worker');worker.append(el('i',null,'head'),el('i',null,'body'));const desk=el('div',null,'desk');desk.append(el('i',null,'screen'),el('i',null,'keyboard'),el('i',null,'signal'));station.append(worker,desk,el('label',a.name),el('small',isLive?'Running':isQueued?'Queued · waiting for worker':waiting?'Review ready':'Idle','desk-status'));station.onclick=()=>{selected=a.id;render();};root.append(station);
  });
 }
 function renderOutput(t,container){
