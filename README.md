@@ -14,4 +14,4 @@ Run local checks with `npm ci` then `npm test` and `npm run build`. See the guid
 
 
 ## v1.1 — Talk back to agents
-Open any finished assignment and click **Reply to agent**. You can type a follow-up or use **Yes — proceed**, **Do the next step**, or **Revise it**. Each reply creates a linked continuation assignment and authorizes one additional OpenAI API run. The previous result is automatically included as context.
+Open any finished assignment and click **Reply to agent (threaded)**. You can type a follow-up or use **Yes — proceed**, **Do the next step**, or **Revise it**. Each reply creates a linked continuation turn that is shown inline in the same conversation and authorizes one additional OpenAI API run. The previous result is automatically included as context.

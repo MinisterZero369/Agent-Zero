@@ -49,16 +49,39 @@ function renderOutput(t,container){
  for(const a of annotations){if(a.start_index<cursor||a.end_index>part.text.length)continue;p.append(document.createTextNode(part.text.slice(cursor,a.start_index)));const link=el('a',part.text.slice(a.start_index,a.end_index)||a.title||'Source');link.href=a.url;link.target='_blank';link.rel='noopener noreferrer';p.append(link);cursor=a.end_index;}p.append(document.createTextNode(part.text.slice(cursor)));container.append(p);}}
  else container.append(el('div',t.output||'No output yet.','output'));
 }
-function renderDetail(){const t=state.tasks.find(t=>t.id===detailId);if(!t)return;const root=$('detail-body');root.replaceChildren();$('detail-title').textContent=state.agents.find(a=>a.id===t.agent)?.name||'Assignment';root.append(el('p',displayStatus(t),'badge '+t.status),el('h3',t.parentId?'Owner reply':'Assignment'),el('p',t.displayPrompt||t.prompt));
+function threadTasks(t){
+ const rootId=t.rootId||t.id;
+ return state.tasks.filter(x=>x.id===rootId||x.rootId===rootId).sort((a,b)=>Date.parse(a.createdAt)-Date.parse(b.createdAt));
+}
+function renderThreadStatus(root,tasks){
+ const latest=tasks[tasks.length-1];
+ if(tasks.length<=1)return latest;
+ const box=el('div',null,'continuation-status '+latest.status);
+ const title=latest.status==='running'?'Agent is continuing the work…':latest.status==='queued'?'Continuation queued…':latest.status==='review'?'New agent response ready':latest.status==='failed'?'Continuation failed':'Continuation complete';
+ box.append(el('strong',title),el('small','Conversation has '+tasks.length+' turns. Latest update: '+new Date(latest.createdAt).toLocaleTimeString()));
+ if(latest.id!==root.id){const open=el('button','Open latest turn','secondary');open.onclick=()=>{detailId=latest.id;renderDetail();};box.append(open);}
+ root.append(box);return latest;
+}
+function renderDetail(){const t=state.tasks.find(t=>t.id===detailId);if(!t)return;const root=$('detail-body');root.replaceChildren();$('detail-title').textContent=state.agents.find(a=>a.id===t.agent)?.name||'Assignment';
+ const thread=threadTasks(t);const latest=renderThreadStatus(root,t===thread[0]?thread:threadTasks(thread[0]));
+ root.append(el('p',displayStatus(t),'badge '+t.status),el('h3',t.parentId?'Owner reply':'Assignment'),el('p',t.displayPrompt||t.prompt));
  if(t.parentId){const parent=state.tasks.find(x=>x.id===t.parentId);if(parent){const box=el('div',null,'thread-context');box.append(el('small','Previous agent result'),el('div',(parent.output||parent.error||'No saved result.').slice(-3500),'output'));root.append(box);}}
  if(t.error)root.append(el('p',t.error,'error'));
- if(!fresh(t)&&['queued','running'].includes(t.status))root.append(el('p','No completion was confirmed. Check Netlify function logs. A new run may incur additional usage. A queued run can be resumed without creating a new assignment.','error'));
+ if(!fresh(t)&&['queued','running'].includes(t.status))root.append(el('p','No completion was confirmed yet. Use Resume queued if this turn is still queued. If it is running, check the Netlify background-function log before creating another paid run.','error'));
  if(t.output){root.append(el('h3','Result'));renderOutput(t,root);}
+ // Show the continuation conversation inline when viewing the original/root task.
+ if(!t.parentId&&thread.length>1){root.append(el('h3','Conversation'));
+  for(const turn of thread.slice(1)){const card=el('div',null,'conversation-turn '+turn.status);card.append(el('small','You · '+new Date(turn.createdAt).toLocaleTimeString()),el('div',turn.ownerReply||turn.displayPrompt||'','owner-reply'),el('span',displayStatus(turn),'badge '+turn.status));
+   if(turn.status==='queued'||turn.status==='running')card.append(el('p',turn.status==='running'?'Agent is working on this reply now. This page refreshes automatically.':'The reply is saved and waiting for the worker to start.','activity'));
+   if(turn.error)card.append(el('p',turn.error,'error'));if(turn.output){card.append(el('small','Agent'),el('div',turn.output,'output'));}
+   root.append(card);}}
  if(t.sources?.length){root.append(el('h3','Sources'));const list=el('ul');for(const s of t.sources){if(!/^https?:\/\//.test(s.url))continue;const li=el('li');const a=el('a',s.title);a.href=s.url;a.target='_blank';a.rel='noopener noreferrer';li.append(a);list.append(li);}root.append(list);}
  root.append(el('h3','Activity'));for(const s of t.steps)root.append(el('p',new Date(s.time).toLocaleTimeString()+' — '+s.text,'activity'));
  if(t.usage)root.append(el('p',`Model: ${t.model} · Input tokens: ${t.usage.input_tokens||0} · Output tokens: ${t.usage.output_tokens||0}. Token counts exclude separate web-search charges.`,'hint'));
- $('accept').hidden=t.status!=='review';$('resume').hidden=t.status!=='queued';$('download').hidden=!t.output;$('again').hidden=['queued','running'].includes(t.status)&&fresh(t);$('reply').hidden=!['review','accepted','failed'].includes(t.status);$('reply-box').hidden=true;$('reply-web-search').checked=!!t.webSearch;$('reply-message').value='';
+ const rootTask=thread[0];const latestTurn=thread[thread.length-1];const active=['queued','running'].includes(latestTurn.status)&&fresh(latestTurn);
+ $('accept').hidden=t.status!=='review';$('resume').hidden=t.status!=='queued';$('download').hidden=!t.output;$('again').hidden=['queued','running'].includes(t.status)&&fresh(t);$('reply').hidden=active||!['review','accepted','failed'].includes(latestTurn.status);$('reply').textContent=thread.length>1?'Reply again':'Reply to agent';$('reply-box').hidden=true;$('reply-web-search').checked=!!latestTurn.webSearch;$('reply-message').value='';
 }
+
 function download(name,text,type='text/plain'){const url=URL.createObjectURL(new Blob([text],{type}));const a=el('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function compose(task){requestId=crypto.randomUUID();$('prompt').value=task?.prompt||'';if(task)$('agent').value=task.agent;else if(selected!=='all')$('agent').value=selected;$('web-search').checked=task?.webSearch||false;$('compose').showModal();}
 $('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{await api('login','POST',{password:$('password').value});$('password').value='';$('login-error').textContent='';await refresh();}catch(e){$('login-error').textContent=e.message;}finally{b.disabled=false;}};
@@ -74,7 +97,7 @@ $('again').onclick=()=>{const task=state.tasks.find(t=>t.id===detailId);$('detai
 
 $('reply').onclick=()=>{$('reply-box').hidden=false;$('reply-message').focus();};
 document.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>{$('reply-box').hidden=false;$('reply-message').value=b.dataset.quick;$('reply-message').focus();});
-$('reply-form').onsubmit=async e=>{e.preventDefault();const message=$('reply-message').value.trim();if(!message)return;const button=$('send-reply');button.disabled=true;try{const id=crypto.randomUUID();const result=await api('followup','POST',{id,parentId:detailId,message,webSearch:$('reply-web-search').checked});notify(result.notice||'Reply sent. The agent is continuing the work.');$('detail').close();filter='all';await refresh();detailId=result.id;renderDetail();$('detail').showModal();}catch(err){notify(err.message);}finally{button.disabled=false;}};
+$('reply-form').onsubmit=async e=>{e.preventDefault();const message=$('reply-message').value.trim();if(!message)return;const button=$('send-reply');button.disabled=true;try{const current=state.tasks.find(t=>t.id===detailId);const thread=threadTasks(current);const parent=thread[thread.length-1];const rootId=thread[0].id;const id=crypto.randomUUID();const result=await api('followup','POST',{id,parentId:parent.id,message,webSearch:$('reply-web-search').checked});notify(result.notice||'Reply sent. The agent is continuing the work now.');filter='all';await refresh();detailId=rootId;renderDetail();}catch(err){notify(err.message);}finally{button.disabled=false;}};
 $('download').onclick=()=>{const t=state.tasks.find(t=>t.id===detailId);download('4D-Result-'+t.id+'.txt',t.prompt+'\n\n'+t.output+'\n\nSOURCES\n'+(t.sources||[]).map(s=>s.title+'\n'+s.url).join('\n\n'));};
 $('export').onclick=()=>download('4D-Agent-Office-History.json',JSON.stringify(state,null,2),'application/json');
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('app').hidden)refresh();});
